@@ -1,0 +1,27 @@
+{
+  "timezone": "GMT+2",
+  "worldEvents": [
+    {
+      "title": "Interluminary Parasol",
+      "roleKey": "interluminaryRoleId",
+      "textKey": "interluminary",
+      "times": ["00:00", "01:30", "03:00", "04:30", "06:00", "07:30", "09:00", "10:30", "12:00", "13:30", "15:00", "16:30", "18:00", "19:30", "21:00", "22:30"],
+      "defaultText": "Interluminary Parasol should be happening now."
+    },
+    {
+      "title": "Battle Royale",
+      "roleKey": "battleRoyaleRoleId",
+      "textKey": "battleRoyale",
+      "times": ["00:30", "02:00", "03:30", "05:00", "06:30", "08:00", "09:30", "11:00", "12:30", "14:00", "15:30", "17:00", "18:30", "20:00", "21:30", "23:00"],
+      "defaultText": "Battle Royale should be happening now."
+    },
+    {
+      "title": "Carnival of Hearts",
+      "roleKey": "carnivalRoleId",
+      "textKey": "carnival",
+      "times": ["01:00", "02:30", "04:00", "05:30", "07:00", "08:30", "10:00", "11:30", "13:00", "14:30", "16:00", "17:30", "19:00", "20:30", "22:00", "23:30"],
+      "defaultText": "Carnival of Hearts should be happening now."
+    }
+  ],
+  "doomTimes": ["01:00", "03:00", "05:00", "07:00", "09:00", "11:00", "13:00", "15:00", "17:00", "19:00", "21:00", "23:00"]
+}
