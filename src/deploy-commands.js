@@ -162,6 +162,15 @@ const commands = [
     .setName('ally-list')
     .setDescription('Show the current allied guilds.'),
   new SlashCommandBuilder()
+    .setName('remove-ally')
+    .setDescription('Remove an allied guild from the ally list.')
+    .addStringOption((option) => option
+      .setName('name')
+      .setDescription('The name of the allied guild to remove.')
+      .setMaxLength(100)
+      .setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
     .setName('set-ally-request-channel')
     .setDescription('Choose the channel where ally requests should be sent.')
     .addChannelOption((option) => option

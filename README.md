@@ -18,7 +18,8 @@ Commands:
 - `/abyssal-eclipse` explains the guild and its bot features.
 - `/ally-request` submits a guild alliance request with guild name, top rank, server ID, and server link.
 - `/set-ally-request-channel` configures the channel that ally requests are forwarded to. Only the guild owner can use it.
-- `/ally-list` shows the accepted allies in a numbered list.
+- `/ally-list` publicly shows the accepted allies with a `Join here` link for each server.
+- `/remove-ally` removes an ally by name. Requires Manage Server.
 - `/set-health-channel` chooses where bot failures are reported. Requires Manage Server.
 - `/setup` chooses the gank alert channel and gank ping role for the server. Only the guild owner can use it.
 - `/gank-ping` sends a location-based gank alert with a required location and details.
@@ -73,7 +74,7 @@ Use `/set-event-text` to customize the message for Doom of Caeranthil, Interlumi
 
 Use `/ally-request guild-name:... top-rank:... server-id:... server-link:...` to send a guild alliance request to the configured ally-request channel. The target channel is set with `/set-ally-request-channel channel:#ally-requests`, and the guild owner is the only user allowed to configure it.
 
-Use `/ally-list` to view the accepted allies. The list shows the accepted guild names and server links with numbered entries so the count is easy to track.
+Use `/ally-list` to publicly show the accepted allies. Each numbered entry includes a `Join here` link to that ally's Discord server. Use `/remove-ally name:...` to remove an ally by its listed name; this requires Manage Server permission.
 
 Use `/set-health-channel channel:#bot-health` to receive a notification when Discord reports an error. Alerts are rate-limited so one outage does not flood the channel.
 

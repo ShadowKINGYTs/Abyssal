@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
+import { allyListText, removeAllyByName } from './allies.js';
 
 const {
   DISCORD_TOKEN,
@@ -111,13 +112,6 @@ async function setAllyRequestTarget(guildId, channelId) {
   settings._allyRequestGuildId = guildId;
   settings._allyRequestChannelId = channelId;
   await writeSettings(settings);
-}
-
-function allyListText(allies) {
-  const list = allies.length > 0
-    ? allies.map((ally, index) => `**${index + 1}.** **${ally.name}** — ${ally.serverLink}`).join('\n')
-    : 'No allies have been accepted yet.';
-  return `**Allied Alliances**\n\n**Current Allies:**\n${list}`;
 }
 
 function eventEmbed(event) {
@@ -555,7 +549,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.commandName === 'help') {
     await interaction.reply({
-      content: '**Commands**\n`/ping` Check the bot response.\n`/help` Show this list.\n`/server` Show detailed server information.\n`/abyssal-eclipse` Guild information.\n`/deepwoken-info` Get Deepwoken information and Wiki links.\n`/set-event-channel` Choose the Deepwoken alert channel.\n`/deepwoken-test` Test the configured alert channel.\n`/set-event-roles` Choose the roles to ping.\n`/clear-event-roles` Disable role pings.\n`/set-doom-role`, `/set-interluminary-role`, `/set-battle-royale-role`, `/set-carnival-role` Configure event role pings.\n`/set-event-text` Customize world event text.\n`/world-event-test` Test a world event alert.\n`/deepwoken-schedule` Schedule an event alert.\n`/ally-request` Submit an alliance request.\n`/set-ally-request-channel` Configure the ally request channel.\n`/ally-list` View accepted allies.\n`/set-health-channel` Configure bot health alerts.\n`/setup` Set this server\'s gank channel and ping role.\n`/gank-ping` Send a gank alert.',
+      content: '**Commands**\n`/ping` Check the bot response.\n`/help` Show this list.\n`/server` Show detailed server information.\n`/abyssal-eclipse` Guild information.\n`/deepwoken-info` Get Deepwoken information and Wiki links.\n`/set-event-channel` Choose the Deepwoken alert channel.\n`/deepwoken-test` Test the configured alert channel.\n`/set-event-roles` Choose the roles to ping.\n`/clear-event-roles` Disable role pings.\n`/set-doom-role`, `/set-interluminary-role`, `/set-battle-royale-role`, `/set-carnival-role` Configure event role pings.\n`/set-event-text` Customize world event text.\n`/world-event-test` Test a world event alert.\n`/deepwoken-schedule` Schedule an event alert.\n`/ally-request` Submit an alliance request.\n`/set-ally-request-channel` Configure the ally request channel.\n`/ally-list` View accepted allies.\n`/remove-ally` Remove an ally (server managers only).\n`/set-health-channel` Configure bot health alerts.\n`/setup` Set this server\'s gank channel and ping role.\n`/gank-ping` Send a gank alert.',
       ephemeral: true,
     });
     return;
@@ -743,13 +737,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     const requestId = `${Date.now()}-${interaction.user.id}`;
+    const serverLink = interaction.options.getString('server-link', true).trim();
+    let serverUrl;
+    try {
+      serverUrl = new URL(serverLink);
+    } catch {
+      await interaction.reply({ content: 'Provide a valid HTTP or HTTPS Discord server invite link.', ephemeral: true });
+      return;
+    }
+    if (serverUrl.protocol !== 'http:' && serverUrl.protocol !== 'https:') {
+      await interaction.reply({ content: 'Provide a valid HTTP or HTTPS Discord server invite link.', ephemeral: true });
+      return;
+    }
+
     const request = {
       id: requestId,
       requesterId: interaction.user.id,
       guildName: interaction.options.getString('guild-name', true).trim(),
       topRank: interaction.options.getString('top-rank', true).trim(),
       serverId: interaction.options.getString('server-id', true).trim(),
-      serverLink: interaction.options.getString('server-link', true).trim(),
+      serverLink: serverUrl.href,
       submittedAt: new Date().toISOString(),
     };
 
@@ -781,7 +788,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.commandName === 'ally-list') {
     const settings = await readSettings();
     const allies = Array.isArray(settings.allyList) ? settings.allyList : [];
-    await interaction.reply({ content: allyListText(allies), ephemeral: true });
+    await interaction.reply({ content: allyListText(allies) });
+    return;
+  }
+
+  if (interaction.commandName === 'remove-ally') {
+    const canManage = interaction.user.id === interaction.guild?.ownerId
+      || interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+    if (!canManage) {
+      await interaction.reply({ content: 'Only the guild owner or a server manager can remove allies.', ephemeral: true });
+      return;
+    }
+
+    const allyName = interaction.options.getString('name', true).trim();
+    if (!allyName) {
+      await interaction.reply({ content: 'Enter the name of the ally you want to remove.', ephemeral: true });
+      return;
+    }
+
+    const settings = await readSettings();
+    const allies = Array.isArray(settings.allyList) ? settings.allyList : [];
+    const removedAlly = removeAllyByName(allies, allyName);
+    if (!removedAlly) {
+      await interaction.reply({ content: `No ally named **${allyName}** was found.`, ephemeral: true });
+      return;
+    }
+
+    settings.allyList = allies;
+    await writeSettings(settings);
+    await interaction.reply({ content: `Removed **${removedAlly.name}** from the ally list.`, ephemeral: true });
     return;
   }
 
