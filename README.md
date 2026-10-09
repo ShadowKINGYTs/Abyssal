@@ -38,9 +38,8 @@ npm.cmd install
 3. Fill in `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`.
 	Optionally set `DEEPWOKEN_EVENTS_URL` to a JSON event feed. The feed must return either an array or `{ "events": [] }`, where each event has a unique `id`, `title`, and optional `description`, `timestamp`, and `url`.
 	You can customize `/abyssal-eclipse` with `GUILD_DESCRIPTION` and `GUILD_RULES_URL`.
-4. In the Discord Developer Portal, open the bot's **Bot** settings and enable **Message Content Intent** if you plan to use prefix build commands.
-5. Invite the bot using the `bot` and `applications.commands` OAuth2 scopes.
-6. Run:
+4. Invite the bot using the `bot` and `applications.commands` OAuth2 scopes.
+5. Run:
 
 ```powershell
 npm.cmd run deploy
