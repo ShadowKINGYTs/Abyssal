@@ -188,14 +188,14 @@ const commands = [
       .setMaxLength(100)
       .setRequired(true))
     .addStringOption((option) => option
-      .setName('target')
-      .setDescription('Optional target or enemy description.')
-      .setMaxLength(200))
-    .addStringOption((option) => option
       .setName('details')
       .setDescription('The details of the report.')
       .setMaxLength(500)
-      .setRequired(true)),
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('target')
+      .setDescription('Optional target or enemy description.')
+      .setMaxLength(200)),
   new SlashCommandBuilder()
     .setName('deepwoken-schedule')
     .setDescription('Schedule a Deepwoken event alert in the configured channel.')
