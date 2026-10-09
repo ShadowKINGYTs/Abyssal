@@ -16,25 +16,18 @@ Commands:
 - `/set-carnival-role` chooses the role for automatic Carnival of Hearts pings. Requires Manage Server.
 - `/set-event-text` changes the alert text for an automatic world event. Requires Manage Server.
 - `/abyssal-eclipse` explains the guild and its bot features.
-- `/ask` answers Deepwoken and guild questions using Google's free Gemini API tier.
-- `/chat` chats with the AI while remembering your recent messages.
-- `/chat-reset` clears your AI conversation memory.
-- `-ask your message` chats with the AI using a normal Discord message.
-- `-build idea` generates a small offline Deepwoken build idea.
-- `-build random` generates a random offline Deepwoken build.
-- `-build reroll` rerolls only the stats while keeping the same build choices.
-- `-reset` clears your prefix-chat conversation.
-- `/set-ai-channel` restricts all AI commands to one channel. Requires Manage Server.
-- `/clear-ai-channel` removes the AI channel restriction. Requires Manage Server.
-- `/set-gank-channel` chooses where gank alerts are posted. Requires Manage Server.
-- `/set-gank-roles` chooses up to ten roles for gank alerts. Requires Manage Server.
-- `/gank-ping` sends a location-based gank alert.
+- `/ally-request` submits a guild alliance request with guild name, top rank, server ID, and server link.
+- `/set-ally-request-channel` configures the channel that ally requests are forwarded to. Only the guild owner can use it.
+- `/ally-list` shows the accepted allies in a numbered list.
+- `/set-health-channel` chooses where bot failures are reported. Requires Manage Server.
+- `/setup` chooses the gank alert channel and gank ping role for the server. Only the guild owner can use it.
+- `/gank-ping` sends a location-based gank alert with a required location and details.
 - `/deepwoken-info` gives basic Deepwoken information and Wiki links.
 - `/deepwoken-schedule` schedules an event alert for a number of minutes from now.
 
 ## Setup
 
-This bot is intended for your private personal repository. Clone it and install its dependencies:
+This bot is ready to be published to GitHub. Clone the repository and install its dependencies:
 
 ```powershell
 npm.cmd install
@@ -44,8 +37,8 @@ npm.cmd install
 2. Copy `.env.example` to `.env`.
 3. Fill in `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`.
 	Optionally set `DEEPWOKEN_EVENTS_URL` to a JSON event feed. The feed must return either an array or `{ "events": [] }`, where each event has a unique `id`, `title`, and optional `description`, `timestamp`, and `url`.
-	For free AI answers, create a Gemini API key at [Google AI Studio](https://aistudio.google.com/apikey), set `GEMINI_API_KEY`, and optionally set `GEMINI_MODEL`. Discord members do not need their own key or payment, but Google's free tier has rate limits. You can customize `/abyssal-eclipse` with `GUILD_DESCRIPTION` and `GUILD_RULES_URL`.
-4. In the Discord Developer Portal, open the bot's **Bot** settings and enable **Message Content Intent**. This is required for `-ask`.
+	You can customize `/abyssal-eclipse` with `GUILD_DESCRIPTION` and `GUILD_RULES_URL`.
+4. In the Discord Developer Portal, open the bot's **Bot** settings and enable **Message Content Intent** if you plan to use prefix build commands.
 5. Invite the bot using the `bot` and `applications.commands` OAuth2 scopes.
 6. Run:
 
@@ -54,7 +47,7 @@ npm.cmd run deploy
 npm.cmd start
 ```
 
-Use `npm.cmd run dev` during development. Keep `.env`, your bot token, and `data/settings.json` on your computer; they are ignored by Git and are not needed in the private repository.
+Use `npm.cmd run dev` during development. Keep `.env`, your bot token, and `data/settings.json` on your computer; they are ignored by Git and should not be committed to the repository.
 
 After starting the bot, run `/set-event-channel` in Discord. Automatic event alerts require a real Deepwoken event feed URL; Discord itself does not provide Deepwoken game-event data.
 
@@ -79,16 +72,12 @@ Use `/set-carnival-role` to choose a separate role for Carnival of Hearts. The b
 
 Use `/set-event-text` to customize the message for Doom of Caeranthil, Interluminary Parasol, Battle Royale, or Carnival of Hearts. The scheduled CET time is added automatically, and custom text is saved per server.
 
-Use `/chat message:...` for a general conversation with the AI about everyday topics, ideas, jokes, games, advice, or anything else. It is not limited to Deepwoken. Each member has separate short-term memory in each server, limited to the most recent six turns. Use `/chat-reset` to clear your conversation. Chat memory is held in RAM and is cleared when the bot restarts.
+Use `/ally-request guild-name:... top-rank:... server-id:... server-link:...` to send a guild alliance request to the configured ally-request channel. The target channel is set with `/set-ally-request-channel channel:#ally-requests`, and the guild owner is the only user allowed to configure it.
 
-You can also type `-ask hello` in a server channel for the same conversational AI. The bot replies in that channel and remembers the recent conversation separately for each member. Enable Message Content Intent in the Discord Developer Portal or prefix messages will be ignored.
+Use `/ally-list` to view the accepted allies. The list shows the accepted guild names and server links with numbered entries so the count is easy to track.
 
-Use `/set-ai-channel channel:#ai-chat` to limit `/ask`, `/chat`, and `-ask` to one channel. Use `/clear-ai-channel` to allow them everywhere again.
+Use `/set-health-channel channel:#bot-health` to receive a notification when Discord reports an error. Alerts are rate-limited so one outage does not flood the channel.
 
-Type `-reset` whenever you want to clear your conversation and start fresh. `-ask-reset` works as an alternate reset command.
-
-Type `-build idea` or `-build random` for an offline build with one oath, one weapon, one or more randomly selected attunements, and complete pre-shrine and post-shrine stat plans. `Attunementless` is treated as an attunement option. These commands do not use Gemini, so they still work when the AI quota is unavailable. Use `-build reroll` or `-build stats` to get new stats while keeping the same oath, weapon, and attunements. Check exact requirements and talents in the [Deepwoken Builder](https://deepwoken.co/builder) and [Deepwoken Wiki](https://deepwoken.co/wiki) because the game changes.
-
-For gank coordination, use `/set-gank-channel`, `/set-gank-roles`, then `/gank-ping location:... target:... details:...`. Gank pings use only the roles you configure and fall back to the event channel if no gank channel is set.
+For gank coordination, use `/setup channel:#ganks role:@Gank Ping`, then `/gank-ping location:... target:... details:...` to send a ping from that server using the configured gank channel and role. The gank alert includes the origin server name and the details you report.
 
 The Wiki is used as an information link, but it does not provide a stable live event clock that a bot can safely poll. For known event times, use `/deepwoken-schedule` with the event name and minutes until it happens. Scheduled alerts are saved in `data/settings.json` and restored after a restart.

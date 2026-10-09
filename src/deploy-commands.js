@@ -2,7 +2,8 @@ import 'dotenv/config';
 import { ChannelType, PermissionFlagsBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
 
 const { DISCORD_TOKEN, CLIENT_ID, GUILD_ID } = process.env;
-if (!DISCORD_TOKEN || !CLIENT_ID || !GUILD_ID) {
+const discordToken = DISCORD_TOKEN?.trim().replace(/^Bot\s+/i, '');
+if (!discordToken || !CLIENT_ID || !GUILD_ID) {
   throw new Error('DISCORD_TOKEN, CLIENT_ID, and GUILD_ID are required in .env');
 }
 
@@ -20,27 +21,17 @@ const commands = [
       .setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
-    .setName('set-ai-channel')
-    .setDescription('Restrict AI commands to one channel.')
-    .addChannelOption((option) => option
-      .setName('channel')
-      .setDescription('The only channel where AI commands can be used.')
-      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-      .setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder()
-    .setName('clear-ai-channel')
-    .setDescription('Allow AI commands in every channel again.')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder()
-    .setName('set-gank-channel')
-    .setDescription('Choose where gank pings should be posted.')
+    .setName('setup')
+    .setDescription('Set the gank ping channel and ping role for this server.')
     .addChannelOption((option) => option
       .setName('channel')
       .setDescription('The channel for gank pings.')
       .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
       .setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addRoleOption((option) => option
+      .setName('role')
+      .setDescription('The role to ping for gank alerts.')
+      .setRequired(true)),
   new SlashCommandBuilder()
     .setName('deepwoken-test')
     .setDescription('Send a test Deepwoken alert to the configured channel.')
@@ -62,20 +53,6 @@ const commands = [
   new SlashCommandBuilder()
     .setName('clear-event-roles')
     .setDescription('Stop role pings for Deepwoken alerts.')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder()
-    .setName('set-gank-roles')
-    .setDescription('Choose up to ten roles to ping for gank alerts.')
-    .addRoleOption((option) => option.setName('role1').setDescription('Role to ping.').setRequired(true))
-    .addRoleOption((option) => option.setName('role2').setDescription('Another role to ping.'))
-    .addRoleOption((option) => option.setName('role3').setDescription('Another role to ping.'))
-    .addRoleOption((option) => option.setName('role4').setDescription('Another role to ping.'))
-    .addRoleOption((option) => option.setName('role5').setDescription('Another role to ping.'))
-    .addRoleOption((option) => option.setName('role6').setDescription('Another role to ping.'))
-    .addRoleOption((option) => option.setName('role7').setDescription('Another role to ping.'))
-    .addRoleOption((option) => option.setName('role8').setDescription('Another role to ping.'))
-    .addRoleOption((option) => option.setName('role9').setDescription('Another role to ping.'))
-    .addRoleOption((option) => option.setName('role10').setDescription('Another role to ping.'))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
     .setName('set-doom-role')
@@ -159,24 +136,49 @@ const commands = [
     .setName('abyssal-eclipse')
     .setDescription('Learn about the Abyssal Eclipse guild.'),
   new SlashCommandBuilder()
-    .setName('ask')
-    .setDescription('Ask the AI a Deepwoken or guild question.')
+    .setName('ally-request')
+    .setDescription('Send a guild alliance request to the configured ally request channel.')
     .addStringOption((option) => option
-      .setName('question')
-      .setDescription('Your question.')
-      .setMaxLength(1000)
+      .setName('guild-name')
+      .setDescription('Your guild name.')
+      .setMaxLength(100)
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('top-rank')
+      .setDescription('Your guild top rank or highest member rank.')
+      .setMaxLength(100)
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('server-id')
+      .setDescription('Your Discord server ID.')
+      .setMaxLength(64)
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('server-link')
+      .setDescription('Your Discord server invite or server link.')
+      .setMaxLength(500)
       .setRequired(true)),
   new SlashCommandBuilder()
-    .setName('chat')
-    .setDescription('Chat with the free Abyssal Eclipse AI.')
-    .addStringOption((option) => option
-      .setName('message')
-      .setDescription('What do you want to say?')
-      .setMaxLength(1000)
-      .setRequired(true)),
+    .setName('ally-list')
+    .setDescription('Show the current allied guilds.'),
   new SlashCommandBuilder()
-    .setName('chat-reset')
-    .setDescription('Clear your private AI conversation memory.'),
+    .setName('set-ally-request-channel')
+    .setDescription('Choose the channel where ally requests should be sent.')
+    .addChannelOption((option) => option
+      .setName('channel')
+      .setDescription('The channel for ally requests.')
+      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+      .setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName('set-health-channel')
+    .setDescription('Choose where bot health alerts are posted.')
+    .addChannelOption((option) => option
+      .setName('channel')
+      .setDescription('The channel for health alerts.')
+      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+      .setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
     .setName('gank-ping')
     .setDescription('Send a coordinated gank alert.')
@@ -191,8 +193,9 @@ const commands = [
       .setMaxLength(200))
     .addStringOption((option) => option
       .setName('details')
-      .setDescription('Optional extra information.')
-      .setMaxLength(500)),
+      .setDescription('The details of the report.')
+      .setMaxLength(500)
+      .setRequired(true)),
   new SlashCommandBuilder()
     .setName('deepwoken-schedule')
     .setDescription('Schedule a Deepwoken event alert in the configured channel.')
@@ -212,6 +215,6 @@ const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 ].map((command) => command.toJSON());
 
-const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
+const rest = new REST({ version: '10' }).setToken(discordToken);
 await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
 console.log('Slash commands registered.');

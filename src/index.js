@@ -1,17 +1,16 @@
 import 'dotenv/config';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { Client, EmbedBuilder, Events, GatewayIntentBits } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder, Events, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
 
 const {
   DISCORD_TOKEN,
   DEEPWOKEN_EVENTS_URL,
-  GEMINI_API_KEY,
-  GEMINI_MODEL = 'gemini-3.6-flash',
   GUILD_DESCRIPTION,
   GUILD_RULES_URL,
 } = process.env;
-if (!DISCORD_TOKEN) throw new Error('DISCORD_TOKEN is required in .env');
+const discordToken = DISCORD_TOKEN?.trim().replace(/^Bot\s+/i, '');
+if (!discordToken) throw new Error('DISCORD_TOKEN is required in .env');
 
 const lockPath = path.join(process.cwd(), 'data', 'bot.lock');
 
@@ -41,7 +40,6 @@ await acquireBotLock();
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
-const chatHistories = new Map();
 const buildHistories = new Map();
 const settingsPath = path.join(process.cwd(), 'data', 'settings.json');
 const eventTimesPath = path.join(process.cwd(), 'data', 'event-times.json');
@@ -100,10 +98,26 @@ async function writeSettings(settings) {
   await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
-async function getAiChannelId(guildId) {
-  if (!guildId) return null;
+async function getAllyRequestTarget() {
   const settings = await readSettings();
-  return settings[guildId]?.aiChannelId || null;
+  return {
+    guildId: settings._allyRequestGuildId || null,
+    channelId: settings._allyRequestChannelId || null,
+  };
+}
+
+async function setAllyRequestTarget(guildId, channelId) {
+  const settings = await readSettings();
+  settings._allyRequestGuildId = guildId;
+  settings._allyRequestChannelId = channelId;
+  await writeSettings(settings);
+}
+
+function allyListText(allies) {
+  const list = allies.length > 0
+    ? allies.map((ally, index) => `**${index + 1}.** **${ally.name}** — ${ally.serverLink}`).join('\n')
+    : 'No allies have been accepted yet.';
+  return `**Allied Alliances**\n\n**Current Allies:**\n${list}`;
 }
 
 function eventEmbed(event) {
@@ -116,63 +130,55 @@ function eventEmbed(event) {
   return embed;
 }
 
-function gankEmbed(location, target, details) {
+function gankEmbed(location, target, details, originGuildName) {
   return new EmbedBuilder()
     .setColor(0xdc2626)
     .setTitle('Abyssal Eclipse gank ping')
     .addFields(
-      { name: 'Location', value: location },
+      { name: 'Location', value: location || 'Not specified' },
       { name: 'Target', value: target || 'Not specified' },
       { name: 'Details', value: details || 'Group up and confirm before engaging.' },
+      { name: 'Origin Server', value: originGuildName || 'Unknown server' },
     )
     .setTimestamp();
 }
 
-async function askAi(question, history = [], generalConversation = false) {
-  if (!GEMINI_API_KEY) {
-    return 'Free AI help is not configured yet. Create a free Gemini API key at https://aistudio.google.com/apikey, add it as GEMINI_API_KEY in .env, restart the bot, and try again.';
+function splitDiscordMessage(content) {
+  const chunks = [];
+  let remaining = String(content || '');
+  while (remaining.length > 2000) {
+    let splitAt = remaining.lastIndexOf('\n\n', 2000);
+    if (splitAt < 1) splitAt = remaining.lastIndexOf('\n', 2000);
+    if (splitAt < 1) splitAt = remaining.lastIndexOf(' ', 2000);
+    if (splitAt < 1) splitAt = 2000;
+    chunks.push(remaining.slice(0, splitAt).trimEnd());
+    remaining = remaining.slice(splitAt).trimStart();
   }
-
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-  const systemPrompt = generalConversation
-    ? 'You are a friendly, relaxed conversation partner in a Discord server. Chat naturally, respond warmly, ask follow-up questions when appropriate, and help with everyday topics, jokes, ideas, games, advice, and casual conversation. You are not limited to Deepwoken or guild topics. Be honest when you do not know something, avoid pretending to be a real person, and keep replies concise enough for Discord.'
-    : `You are the helpful assistant for Abyssal Eclipse, a Discord guild for the Roblox game Deepwoken. Answer questions clearly and concisely. Do not invent current game mechanics, guild rules, player information, or event times. Say when you are unsure and link to the Deepwoken Wiki when useful. Guild description: ${GUILD_DESCRIPTION || 'A Deepwoken guild focused on coordinated events, gank response, and helping members.'}`;
-  const requestBody = {
-    systemInstruction: { parts: [{ text: systemPrompt }] },
-    contents: [...history, { role: 'user', parts: [{ text: question }] }],
-    generationConfig: { temperature: 0.4, maxOutputTokens: 500 },
-  };
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody),
-  });
-
-  if (!response.ok) {
-    if (response.status === 429) {
-      throw new Error('AI quota is exhausted for this Gemini project. Wait for the quota reset or replace GEMINI_API_KEY with a key from a project that has available quota.');
-    }
-    throw new Error(`AI service returned HTTP ${response.status}`);
-  }
-  const payload = await response.json();
-  return payload.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('')
-    || 'The AI did not return an answer.';
-}
-
-function aiErrorMessage(error) {
-  if (error.message.includes('quota')) return 'The Gemini free-tier quota is exhausted. Wait for it to reset or add a Gemini key from a project with available quota.';
-  return 'I could not reach the AI service right now. Try again in a moment.';
+  if (remaining) chunks.push(remaining);
+  return chunks.length > 0 ? chunks : [''];
 }
 
 async function respondToMessage(message, content) {
+  const chunks = splitDiscordMessage(content);
   try {
-    await message.reply(content);
+    await message.reply(chunks[0]);
   } catch (error) {
     console.error('Message reply failed, using channel fallback:', error.message);
-    await message.channel.send(content).catch((sendError) => {
+    await message.channel.send(chunks[0]).catch((sendError) => {
       console.error('Message channel fallback failed:', sendError.message);
     });
   }
+  for (const chunk of chunks.slice(1)) {
+    await message.channel.send(chunk).catch((sendError) => {
+      console.error('Message channel fallback failed:', sendError.message);
+    });
+  }
+}
+
+async function respondToInteraction(interaction, content) {
+  const chunks = splitDiscordMessage(content);
+  await interaction.editReply(chunks[0]);
+  for (const chunk of chunks.slice(1)) await interaction.followUp(chunk);
 }
 
 const buildTemplates = [
@@ -270,23 +276,24 @@ function randomBuildTemplate() {
   return buildTemplates[Math.floor(Math.random() * buildTemplates.length)];
 }
 
-function buildIdeaText(mode, buildKey) {
-  let savedBuild = buildHistories.get(buildKey);
-  if (mode === 'reroll' && !savedBuild) return 'Make a build first with `-build idea` or `-build random`, then use `-build reroll` to change only its stats.';
-
-  const build = mode === 'reroll' ? savedBuild.template : randomBuildTemplate();
-  const currentPlanIndex = savedBuild?.planIndex ?? -1;
-  let planIndex = Math.floor(Math.random() * build.statPlans.length);
-  if (build.statPlans.length > 1 && planIndex === currentPlanIndex) planIndex = (planIndex + 1) % build.statPlans.length;
-  buildHistories.set(buildKey, { template: build, planIndex });
-  const plan = build.statPlans[planIndex];
-  return `**${build.name}**\n\n**Oath:** ${build.oath}\n**Weapon:** ${build.weapon}\n**Attunements:** ${build.attunements.join(', ')}\n\n**Pre-Shrine stats:** ${plan.pre}\n**Post-Shrine stats:** ${plan.post}\n\n**Why it works:** ${build.reason}\n\nCheck exact requirements and talents before investing:\nBuilder: https://deepwoken.co/builder\nWiki: https://deepwoken.co/wiki`;
+function buildTemplatesForStyle(style = 'random') {
+  if (!style || style === 'random') return buildTemplates;
+  const matches = buildTemplates.filter((build) => {
+    const text = `${build.name} ${build.attunements.join(' ')}`.toLowerCase();
+    if (style === 'gale') return text.includes('gale') || text.includes('storm') || text.includes('jetstriker');
+    if (style === 'flame') return text.includes('flame') || text.includes('heavy');
+    if (style === 'shadow') return text.includes('shadow') || text.includes('seer');
+    if (style === 'thunder') return text.includes('thunder') || text.includes('storm') || text.includes('linkstrider');
+    if (style === 'elemental') return build.attunements.length > 1;
+    return true;
+  });
+  return matches.length > 0 ? matches : buildTemplates;
 }
 
 function guildInfo() {
   const description = GUILD_DESCRIPTION || 'A Deepwoken guild focused on coordinated events, gank response, and helping members.';
   const rules = GUILD_RULES_URL ? `\nGuild rules: ${GUILD_RULES_URL}` : '';
-  return `**Abyssal Eclipse**\n${description}\n\nUse \`/ask\` for one-off Deepwoken questions, \`/chat\` or \`-ask\` for a conversation with the AI, \`/gank-ping\` to coordinate a response, and the event commands for scheduled alerts.${rules}`;
+  return `**Abyssal Eclipse**\n${description}\n\nUse \`/gank-ping\` to coordinate a response and the event commands for scheduled alerts.${rules}`;
 }
 
 function nextDoomSpawn(now = new Date()) {
@@ -481,7 +488,64 @@ client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
 });
 
+client.on(Events.Error, (error) => {
+  console.error('Discord client error:', error.message);
+  void notifyHealthChannels('Discord client error', error);
+});
+
+client.on(Events.ShardError, (error) => {
+  console.error('Discord shard error:', error.message);
+  void notifyHealthChannels('Discord connection error', error);
+});
+
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isButton()) {
+    const [action, requestId] = interaction.customId.split(':');
+    if (!action || !requestId || !['ally_accept', 'ally_decline'].includes(action)) return;
+    const settings = await readSettings();
+    const pendingRequest = settings._allyRequests?.[requestId];
+    if (!pendingRequest) {
+      await interaction.update({ content: 'This ally request is no longer available.', components: [] });
+      return;
+    }
+    const canManage = interaction.user.id === interaction.guild?.ownerId || interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+    if (!canManage) {
+      await interaction.reply({ content: 'Only the guild owner or a server manager can accept or decline ally requests.', ephemeral: true });
+      return;
+    }
+    if (action === 'ally_accept') {
+      const allies = Array.isArray(settings.allyList) ? settings.allyList : [];
+      const duplicate = allies.some((ally) => ally.serverLink === pendingRequest.serverLink || ally.name.toLowerCase() === pendingRequest.guildName.toLowerCase());
+      if (!duplicate) {
+        allies.push({
+          name: pendingRequest.guildName,
+          serverLink: pendingRequest.serverLink,
+          serverId: pendingRequest.serverId,
+          topRank: pendingRequest.topRank,
+          addedAt: Date.now(),
+        });
+      }
+      settings.allyList = allies;
+      delete settings._allyRequests?.[requestId];
+      await writeSettings(settings);
+      await interaction.update({ content: `✅ Accepted ally request from **${pendingRequest.guildName}**.`, components: [] });
+      const requester = await client.users.fetch(pendingRequest.requesterId).catch(() => null);
+      if (requester) {
+        await requester.send(`Your ally request for **${pendingRequest.guildName}** was accepted and added to the ally list.`).catch(() => {});
+      }
+      return;
+    }
+
+    delete settings._allyRequests?.[requestId];
+    await writeSettings(settings);
+    await interaction.update({ content: `❌ Declined ally request from **${pendingRequest.guildName}**.`, components: [] });
+    const requester = await client.users.fetch(pendingRequest.requesterId).catch(() => null);
+    if (requester) {
+      await requester.send(`Your ally request for **${pendingRequest.guildName}** was denied.`).catch(() => {});
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName === 'ping') {
@@ -491,7 +555,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.commandName === 'help') {
     await interaction.reply({
-      content: '**Commands**\n`/ping` Check the bot response.\n`/help` Show this list.\n`/server` Show detailed server information.\n`/abyssal-eclipse` Guild information.\n`/ask` Ask the AI one question.\n`/chat` Have a conversation with the AI.\n`-ask message` Chat with the AI using a prefix.\n`-build idea` Get an offline build idea.\n`-build random` Get a random offline build.\n`-build reroll` Reroll only the build stats.\n`-reset` Start a new AI conversation.\n`/chat-reset` Clear your AI conversation.\n`/set-ai-channel` Restrict AI commands to one channel.\n`/clear-ai-channel` Remove the AI channel restriction.\n`/gank-ping` Send a gank alert.\n`/set-event-channel` Choose the Deepwoken alert channel.\n`/set-gank-channel` Choose the gank alert channel.\n`/set-event-roles` Choose the roles to ping.\n`/set-gank-roles` Choose gank roles to ping.\n`/clear-event-roles` Disable role pings.\n`/set-doom-role` Choose the Doom alert role.\n`/set-interluminary-role` Choose the Interluminary Parasol role.\n`/set-battle-royale-role` Choose the Battle Royale role.\n`/set-carnival-role` Choose the Carnival of Hearts role.\n`/set-event-text` Customize world event text.\n`/world-event-test` Test a world event alert.\n`/deepwoken-schedule` Schedule an event alert.\n`/deepwoken-test` Test the configured alert channel.',
+      content: '**Commands**\n`/ping` Check the bot response.\n`/help` Show this list.\n`/server` Show detailed server information.\n`/abyssal-eclipse` Guild information.\n`/setup` Set the gank channel and ping role for this server.\n`/gank-ping` Send a gank alert.\n`/set-event-channel` Choose the Deepwoken alert channel.\n`/set-event-roles` Choose the roles to ping.\n`/clear-event-roles` Disable role pings.\n`/set-doom-role` Choose the Doom alert role.\n`/set-interluminary-role` Choose the Interluminary Parasol role.\n`/set-battle-royale-role` Choose the Battle Royale role.\n`/set-carnival-role` Choose the Carnival of Hearts role.\n`/set-event-text` Customize world event text.\n`/world-event-test` Test a world event alert.\n`/deepwoken-schedule` Schedule an event alert.\n`/deepwoken-test` Test the configured alert channel.',
       ephemeral: true,
     });
     return;
@@ -517,29 +581,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  if (interaction.commandName === 'set-ai-channel') {
+  if (interaction.commandName === 'set-health-channel') {
     const channel = interaction.options.getChannel('channel', true);
     const settings = await readSettings();
-    settings[interaction.guildId] = { ...settings[interaction.guildId], aiChannelId: channel.id };
+    settings[interaction.guildId] = { ...settings[interaction.guildId], healthChannelId: channel.id };
     await writeSettings(settings);
-    await interaction.reply({ content: `AI commands will only work in ${channel}.`, ephemeral: true });
-    return;
-  }
-
-  if (interaction.commandName === 'clear-ai-channel') {
-    const settings = await readSettings();
-    settings[interaction.guildId] = { ...settings[interaction.guildId], aiChannelId: null };
-    await writeSettings(settings);
-    await interaction.reply({ content: 'The AI channel restriction has been removed.', ephemeral: true });
-    return;
-  }
-
-  if (interaction.commandName === 'set-gank-channel') {
-    const channel = interaction.options.getChannel('channel', true);
-    const settings = await readSettings();
-    settings[interaction.guildId] = { ...settings[interaction.guildId], gankChannelId: channel.id };
-    await writeSettings(settings);
-    await interaction.reply({ content: `Gank pings will be posted in ${channel}.`, ephemeral: true });
+    await interaction.reply({ content: `Health alerts will be posted in ${channel}.`, ephemeral: true });
     return;
   }
 
@@ -568,17 +615,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     settings[interaction.guildId] = { ...settings[interaction.guildId], eventRoleIds: roleIds };
     await writeSettings(settings);
     await interaction.reply({ content: `Deepwoken alerts will ping ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}.`, ephemeral: true });
-    return;
-  }
-
-  if (interaction.commandName === 'set-gank-roles') {
-    const roleIds = ['role1', 'role2', 'role3', 'role4', 'role5', 'role6', 'role7', 'role8', 'role9', 'role10']
-      .map((name) => interaction.options.getRole(name)?.id)
-      .filter(Boolean);
-    const settings = await readSettings();
-    settings[interaction.guildId] = { ...settings[interaction.guildId], gankRoleIds: roleIds };
-    await writeSettings(settings);
-    await interaction.reply({ content: `Gank pings will mention ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}.`, ephemeral: true });
     return;
   }
 
@@ -682,52 +718,89 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  if (interaction.commandName === 'ask') {
-    const aiChannelId = await getAiChannelId(interaction.guildId);
-    if (aiChannelId && interaction.channelId !== aiChannelId) {
-      await interaction.reply({ content: `AI commands can only be used in <#${aiChannelId}>.`, ephemeral: true });
+  if (interaction.commandName === 'set-ally-request-channel') {
+    const channel = interaction.options.getChannel('channel', true);
+    if (interaction.guild.ownerId !== interaction.user.id) {
+      await interaction.reply({ content: 'Only the guild owner can configure the ally request channel.', ephemeral: true });
       return;
     }
-    await interaction.deferReply();
-    try {
-      const answer = await askAi(interaction.options.getString('question', true));
-      await interaction.editReply(answer.slice(0, 2000));
-    } catch (error) {
-      console.error('AI request failed:', error.message);
-      await interaction.editReply(aiErrorMessage(error));
-    }
+    await setAllyRequestTarget(interaction.guildId, channel.id);
+    await interaction.reply({ content: `Ally requests will be sent to ${channel} in this server.`, ephemeral: true });
     return;
   }
 
-  if (interaction.commandName === 'chat') {
-    const aiChannelId = await getAiChannelId(interaction.guildId);
-    if (aiChannelId && interaction.channelId !== aiChannelId) {
-      await interaction.reply({ content: `AI commands can only be used in <#${aiChannelId}>.`, ephemeral: true });
+  if (interaction.commandName === 'ally-request') {
+    const target = await getAllyRequestTarget();
+    if (!target.guildId || !target.channelId) {
+      await interaction.reply({ content: 'The ally request channel has not been configured yet. Ask the server owner to use `/set-ally-request-channel`.', ephemeral: true });
       return;
     }
-    const message = interaction.options.getString('message', true);
-    const chatKey = `${interaction.guildId || 'direct-message'}:${interaction.user.id}`;
-    const history = chatHistories.get(chatKey) || [];
-    await interaction.deferReply();
-    try {
-      const answer = await askAi(message, history, true);
-      chatHistories.set(chatKey, [
-        ...history,
-        { role: 'user', parts: [{ text: message }] },
-        { role: 'model', parts: [{ text: answer }] },
-      ].slice(-12));
-      await interaction.editReply(answer.slice(0, 2000));
-    } catch (error) {
-      console.error('Chat AI request failed:', error.message);
-      await interaction.editReply(aiErrorMessage(error));
+    const guild = client.guilds.cache.get(target.guildId) || await client.guilds.fetch(target.guildId).catch(() => null);
+    const channel = guild ? await guild.channels.fetch(target.channelId).catch(() => null) : null;
+    if (!channel?.isTextBased()) {
+      await interaction.reply({ content: 'The configured ally request channel could not be found. Please contact the server owner.', ephemeral: true });
+      return;
     }
+
+    const requestId = `${Date.now()}-${interaction.user.id}`;
+    const request = {
+      id: requestId,
+      requesterId: interaction.user.id,
+      guildName: interaction.options.getString('guild-name', true).trim(),
+      topRank: interaction.options.getString('top-rank', true).trim(),
+      serverId: interaction.options.getString('server-id', true).trim(),
+      serverLink: interaction.options.getString('server-link', true).trim(),
+      submittedAt: new Date().toISOString(),
+    };
+
+    const settings = await readSettings();
+    settings._allyRequests = { ...(settings._allyRequests || {}), [requestId]: request };
+    await writeSettings(settings);
+
+    const embed = new EmbedBuilder()
+      .setColor(0x22c55e)
+      .setTitle('New Ally Request')
+      .addFields(
+        { name: 'Guild Name', value: request.guildName, inline: true },
+        { name: 'Top Rank', value: request.topRank, inline: true },
+        { name: 'Server ID', value: request.serverId, inline: true },
+        { name: 'Server Link', value: request.serverLink || 'Not provided' },
+      )
+      .setTimestamp();
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`ally_accept:${requestId}`).setLabel('Accept').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`ally_decline:${requestId}`).setLabel('Decline').setStyle(ButtonStyle.Danger),
+    );
+
+    await channel.send({ embeds: [embed], components: [row] });
+    await interaction.reply({ content: 'Your ally request has been sent.', ephemeral: true });
     return;
   }
 
-  if (interaction.commandName === 'chat-reset') {
-    const chatKey = `${interaction.guildId || 'direct-message'}:${interaction.user.id}`;
-    chatHistories.delete(chatKey);
-    await interaction.reply({ content: 'Your AI conversation has been cleared.', ephemeral: true });
+  if (interaction.commandName === 'ally-list') {
+    const settings = await readSettings();
+    const allies = Array.isArray(settings.allyList) ? settings.allyList : [];
+    await interaction.reply({ content: allyListText(allies), ephemeral: true });
+    return;
+  }
+
+  if (interaction.commandName === 'setup') {
+    if (interaction.guild.ownerId !== interaction.user.id) {
+      await interaction.reply({ content: 'Only the server owner can configure the gank channel and role.', ephemeral: true });
+      return;
+    }
+    const channel = interaction.options.getChannel('channel', true);
+    const role = interaction.options.getRole('role', true);
+    const settings = await readSettings();
+    settings[interaction.guildId] = {
+      ...settings[interaction.guildId],
+      gankChannelId: channel.id,
+      gankRoleId: role.id,
+      gankRoleIds: [role.id],
+    };
+    await writeSettings(settings);
+    await interaction.reply({ content: `Gank setup complete. Alerts will go to ${channel} and ping ${role}.`, ephemeral: true });
     return;
   }
 
@@ -737,15 +810,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const channelId = guildSettings.gankChannelId || guildSettings.eventChannelId;
     const channel = channelId ? await interaction.guild.channels.fetch(channelId) : null;
     if (!channel?.isTextBased()) {
-      await interaction.reply({ content: 'Choose a gank channel first with `/set-gank-channel`.', ephemeral: true });
+      await interaction.reply({ content: 'Configure this server with `/setup` before sending a gank ping.', ephemeral: true });
       return;
     }
-    const roleIds = guildSettings.gankRoleIds || [];
+    const roleIds = Array.isArray(guildSettings.gankRoleIds) && guildSettings.gankRoleIds.length > 0
+      ? guildSettings.gankRoleIds
+      : guildSettings.gankRoleId
+        ? [guildSettings.gankRoleId]
+        : [];
+    if (roleIds.length === 0) {
+      await interaction.reply({ content: 'No gank ping role is set for this server. Use `/setup` to choose one.', ephemeral: true });
+      return;
+    }
     const location = interaction.options.getString('location', true);
     const target = interaction.options.getString('target');
-    const details = interaction.options.getString('details');
-    const content = roleIds.length > 0 ? roleIds.map((roleId) => `<@&${roleId}>`).join(' ') : 'Gank ping';
-    await channel.send({ content, embeds: [gankEmbed(location, target, details)], allowedMentions: { roles: roleIds } });
+    const details = interaction.options.getString('details', true);
+    const originServerName = interaction.guild?.name || 'Unknown server';
+    const content = roleIds.map((roleId) => `<@&${roleId}>`).join(' ');
+    await channel.send({ content, embeds: [gankEmbed(location, target, details, originServerName)], allowedMentions: { roles: roleIds } });
     await interaction.reply({ content: `Gank ping sent to ${channel}.`, ephemeral: true });
     return;
   }
@@ -770,51 +852,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || !message.inGuild()) return;
-
-  const command = message.content.trim().toLowerCase();
-  const chatKey = `${message.guildId}:${message.author.id}`;
-  if (command === '-reset' || command === '-ask-reset') {
-    chatHistories.delete(chatKey);
-    await respondToMessage(message, 'Your AI conversation has been reset. Start a new one with `-ask`.');
-    return;
-  }
-  if (/^-build\s+(?:idea|random|reroll|stats)(?:\s|$)/i.test(message.content)) {
-    const aiChannelId = await getAiChannelId(message.guildId);
-    if (aiChannelId && message.channelId !== aiChannelId) return;
-    const buildCommand = message.content.trim().toLowerCase().split(/\s+/)[1];
-    const buildKey = `${message.guildId}:${message.author.id}`;
-    const mode = buildCommand === 'reroll' || buildCommand === 'stats' ? 'reroll' : 'new';
-    await respondToMessage(message, buildIdeaText(mode, buildKey));
-    return;
-  }
-  if (!/^-ask(?:\s|$)/i.test(message.content)) return;
-
-  const aiChannelId = await getAiChannelId(message.guildId);
-  if (aiChannelId && message.channelId !== aiChannelId) return;
-
-  const question = message.content.slice(4).trim();
-  if (!question) {
-    await respondToMessage(message, 'Use `-ask your message here` to chat with me.');
-    return;
-  }
-
-  const history = chatHistories.get(chatKey) || [];
-  await message.channel.sendTyping().catch(() => {});
-  try {
-    const answer = await askAi(question, history, true);
-    chatHistories.set(chatKey, [
-      ...history,
-      { role: 'user', parts: [{ text: question }] },
-      { role: 'model', parts: [{ text: answer }] },
-    ].slice(-12));
-    await respondToMessage(message, answer.slice(0, 2000));
-  } catch (error) {
-    console.error('Prefix chat AI request failed:', error.message);
-    await respondToMessage(message, aiErrorMessage(error));
-  }
 });
 
-client.login(DISCORD_TOKEN);
+client.login(discordToken).catch((error) => {
+  if (error.code === 'TokenInvalid') {
+    console.error('Discord rejected DISCORD_TOKEN. Copy a new bot token from Developer Portal > Your Application > Bot and replace the value in .env. Do not include "Bot ".');
+    process.exitCode = 1;
+    return;
+  }
+  console.error('Discord login failed:', error.message);
+  process.exitCode = 1;
+});
 
 client.once(Events.ClientReady, () => {
   restoreScheduledAlerts();
